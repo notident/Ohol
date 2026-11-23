@@ -50,6 +50,28 @@ jobs:
           (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
           cp -r "$P/wasm" OneLife/wasm
 
+      - name: Add SDL stubs and legacy GL flag
+        run: |
+          # Create SDL stub source so the linker can find SDL_putenv etc.
+          cat > minorGems/graphics/openGL/sdl_stubs.cpp <<'EOF'
+          #ifdef __EMSCRIPTEN__
+          #include <SDL/SDL.h>
+          extern "C" {
+              int SDL_putenv(const char *variable) { return 0; }
+              SDL_Cursor* SDL_CreateCursor(Uint8 *data, Uint8 *mask, int w, int h, int hot_x, int hot_y) { return nullptr; }
+              void SDL_SetCursor(SDL_Cursor *cursor) {}
+              void SDL_FreeCursor(SDL_Cursor *cursor) {}
+          }
+          #endif
+          EOF
+
+          # Add LEGACY_GL_EMULATION to every emcc/em++ call
+          sed -i 's|em++ |em++ -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
+          sed -i 's|emcc |emcc -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
+
+          echo "=== emcc/em++ lines in build-client.sh ==="
+          grep -n "em++\|emcc" OneLife/wasm/build-client.sh | head -10 || true
+
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
