@@ -1,0 +1,85 @@
+name: Build browser version
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: This repo (patches and build scripts)
+        uses: actions/checkout@v4
+        with:
+          path: web
+
+      - name: OneLife source
+        uses: actions/checkout@v4
+        with:
+          repository: jasonrohrer/OneLife
+          path: OneLife
+
+      - name: minorGems source
+        uses: actions/checkout@v4
+        with:
+          repository: jasonrohrer/minorGems
+          path: minorGems
+
+      - name: Game data
+        uses: actions/checkout@v4
+        with:
+          repository: jasonrohrer/OneLifeData7
+          path: OneLifeData7
+
+      - name: Apply the browser-port patches
+        run: |
+          P=web
+          if [ ! -d web/patches ] && [ -d web/web/patches ]; then P=web/web; fi
+          ls "$P" "$P/patches" "$P/wasm"
+          (cd OneLife && patch -p1 < "../$P/patches/onelife.patch")
+          (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
+          cp -r "$P/wasm" OneLife/wasm
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          actions-cache-folder: emsdk-cache
+
+      - name: Build
+        run: |
+          chmod +x OneLife/wasm/build-client.sh
+          OneLife/wasm/build-client.sh
+
+      - name: Keep build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: OneLife/wasm/logs
+          if-no-files-found: ignore
+
+      - name: Package site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: OneLife/wasm/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
