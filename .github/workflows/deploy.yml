@@ -58,6 +58,7 @@ jobs:
 
       - name: Build
         run: |
+          find OneLife minorGems -type f \( -name "*.h" -o -name "*.cpp" \) -exec sed -i 's/\bregister\b//g' {} +
           chmod +x OneLife/wasm/build-client.sh
           OneLife/wasm/build-client.sh
 
