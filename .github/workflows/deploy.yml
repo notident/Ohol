@@ -49,7 +49,7 @@ jobs:
           (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
           cp -r "$P/wasm" OneLife/wasm
 
-      - name: Patch build script (stub + GL flag)
+      - name: Patch build script (add SDL stub compile)
         run: |
           cat > /tmp/sdl_stubs.cpp <<'STUB'
           #ifdef __EMSCRIPTEN__
@@ -70,22 +70,21 @@ jobs:
           python3 - <<'PY'
           p = 'OneLife/wasm/build-client.sh'
           s = open(p).read()
-          link_marker = 'em++ -O2 -fexceptions "$OBJ"/*.o'
-          if link_marker in s and 'zz_stubs.o' not in s:
-              stub_line = 'em++ -O2 -fexceptions -I"$WORK" -w -c /tmp/sdl_stubs.cpp -o "$OBJ/zz_stubs.o"\n'
-              s = s.replace(link_marker, stub_line + link_marker)
-          s = s.replace('-sLEGACY_GL_EMULATION=1', '-sLEGACY_GL_EMULATION=1 -sFULL_ES2=1')
+          marker = 'em++ -O2 -fexceptions "$OBJ"/*.o'
+          if marker in s and 'zz_stubs.o' not in s:
+              line = 'em++ -O2 -fexceptions -I"$WORK" -w -c /tmp/sdl_stubs.cpp -o "$OBJ/zz_stubs.o"\n'
+              s = s.replace(marker, line + marker)
           open(p, 'w').write(s)
-          print("patched build-client.sh")
+          print("patched build-client.sh" if marker in s else "MARKER NOT FOUND — link line did not match")
           PY
 
-          echo "=== relevant lines in build-client.sh now ==="
-          grep -n 'sdl_stubs\|FULL_ES2\|LEGACY_GL\|em++ -O2 -fexceptions "\$OBJ"' OneLife/wasm/build-client.sh
+          echo "=== relevant lines ==="
+          grep -n 'zz_stubs\|LEGACY_GL\|em++ -O2 -fexceptions "\$OBJ"' OneLife/wasm/build-client.sh || true
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64
+          version: 3.1.40
           actions-cache-folder: emsdk-cache
 
       - name: Build
