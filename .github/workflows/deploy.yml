@@ -45,19 +45,13 @@ jobs:
         run: |
           P=web
           if [ ! -d web/patches ] && [ -d web/web/patches ]; then P=web/web; fi
-          ls "$P" "$P/patches" "$P/wasm"
           (cd OneLife && patch -p1 < "../$P/patches/onelife.patch")
           (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
           cp -r "$P/wasm" OneLife/wasm
 
-      - name: Show build script and inject fixes
+      - name: Patch build script (stub + GL flag)
         run: |
-          echo "=========== build-client.sh (truncated long lines) ==========="
-          cut -c1-300 OneLife/wasm/build-client.sh
-          echo "=========== end build-client.sh ==========="
-
-          # Create stub file in same dir as ScreenGL_SDL.cpp (already compiled)
-          cat > minorGems/graphics/openGL/sdl_stubs_wasm.cpp <<'STUB_EOF'
+          cat > /tmp/sdl_stubs.cpp <<'STUB'
           #ifdef __EMSCRIPTEN__
           #include <stdint.h>
           struct SDL_Cursor;
@@ -71,17 +65,22 @@ jobs:
               void SDL_FreeCursor(struct SDL_Cursor *c) { (void)c; }
           }
           #endif
-          STUB_EOF
-          echo "created minorGems/graphics/openGL/sdl_stubs_wasm.cpp"
+          STUB
 
-          # Best-effort flag injection for common patterns
-          sed -i 's|^emcc |emcc -sLEGACY_GL_EMULATION=1 |g'  OneLife/wasm/build-client.sh
-          sed -i 's|^em++ |em++ -sLEGACY_GL_EMULATION=1 |g'  OneLife/wasm/build-client.sh
-          sed -i 's|^\([[:space:]]*\)emcc |\1emcc -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
-          sed -i 's|^\([[:space:]]*\)em++ |\1em++ -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
+          python3 - <<'PY'
+          p = 'OneLife/wasm/build-client.sh'
+          s = open(p).read()
+          link_marker = 'em++ -O2 -fexceptions "$OBJ"/*.o'
+          if link_marker in s and 'zz_stubs.o' not in s:
+              stub_line = 'em++ -O2 -fexceptions -I"$WORK" -w -c /tmp/sdl_stubs.cpp -o "$OBJ/zz_stubs.o"\n'
+              s = s.replace(link_marker, stub_line + link_marker)
+          s = s.replace('-sLEGACY_GL_EMULATION=1', '-sLEGACY_GL_EMULATION=1 -sFULL_ES2=1')
+          open(p, 'w').write(s)
+          print("patched build-client.sh")
+          PY
 
-          echo "--- after sed, emcc/em++ lines: ---"
-          grep -n 'emcc\|em++' OneLife/wasm/build-client.sh | head -20 || echo "none found"
+          echo "=== relevant lines in build-client.sh now ==="
+          grep -n 'sdl_stubs\|FULL_ES2\|LEGACY_GL\|em++ -O2 -fexceptions "\$OBJ"' OneLife/wasm/build-client.sh
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
@@ -91,11 +90,6 @@ jobs:
 
       - name: Build
         run: |
-          # Shadow emcc/em++ so any unqualified call gets the flag automatically
-          emcc() { command emcc -sLEGACY_GL_EMULATION=1 "$@"; }
-          em++() { command em++ -sLEGACY_GL_EMULATION=1 "$@"; }
-          export -f emcc em++
-
           find OneLife minorGems -type f \( -name "*.h" -o -name "*.cpp" \) -exec sed -i 's/\bregister\b//g' {} +
           chmod +x OneLife/wasm/build-client.sh
           bash OneLife/wasm/build-client.sh
