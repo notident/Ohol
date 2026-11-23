@@ -50,27 +50,38 @@ jobs:
           (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
           cp -r "$P/wasm" OneLife/wasm
 
-      - name: Add SDL stubs and legacy GL flag
+      - name: Show build script and inject fixes
         run: |
-          # Create SDL stub source so the linker can find SDL_putenv etc.
-          cat > minorGems/graphics/openGL/sdl_stubs.cpp <<'EOF'
+          echo "=========== build-client.sh (truncated long lines) ==========="
+          cut -c1-300 OneLife/wasm/build-client.sh
+          echo "=========== end build-client.sh ==========="
+
+          # Create stub file in same dir as ScreenGL_SDL.cpp (already compiled)
+          cat > minorGems/graphics/openGL/sdl_stubs_wasm.cpp <<'STUB_EOF'
           #ifdef __EMSCRIPTEN__
-          #include <SDL/SDL.h>
+          #include <stdint.h>
+          struct SDL_Cursor;
           extern "C" {
-              int SDL_putenv(const char *variable) { return 0; }
-              SDL_Cursor* SDL_CreateCursor(Uint8 *data, Uint8 *mask, int w, int h, int hot_x, int hot_y) { return nullptr; }
-              void SDL_SetCursor(SDL_Cursor *cursor) {}
-              void SDL_FreeCursor(SDL_Cursor *cursor) {}
+              int SDL_putenv(const char *v) { (void)v; return 0; }
+              struct SDL_Cursor *SDL_CreateCursor(uint8_t *d, uint8_t *m, int w, int h, int hx, int hy) {
+                  (void)d; (void)m; (void)w; (void)h; (void)hx; (void)hy;
+                  return 0;
+              }
+              void SDL_SetCursor(struct SDL_Cursor *c) { (void)c; }
+              void SDL_FreeCursor(struct SDL_Cursor *c) { (void)c; }
           }
           #endif
-          EOF
+          STUB_EOF
+          echo "created minorGems/graphics/openGL/sdl_stubs_wasm.cpp"
 
-          # Add LEGACY_GL_EMULATION to every emcc/em++ call
-          sed -i 's|em++ |em++ -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
-          sed -i 's|emcc |emcc -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
+          # Best-effort flag injection for common patterns
+          sed -i 's|^emcc |emcc -sLEGACY_GL_EMULATION=1 |g'  OneLife/wasm/build-client.sh
+          sed -i 's|^em++ |em++ -sLEGACY_GL_EMULATION=1 |g'  OneLife/wasm/build-client.sh
+          sed -i 's|^\([[:space:]]*\)emcc |\1emcc -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
+          sed -i 's|^\([[:space:]]*\)em++ |\1em++ -sLEGACY_GL_EMULATION=1 |g' OneLife/wasm/build-client.sh
 
-          echo "=== emcc/em++ lines in build-client.sh ==="
-          grep -n "em++\|emcc" OneLife/wasm/build-client.sh | head -10 || true
+          echo "--- after sed, emcc/em++ lines: ---"
+          grep -n 'emcc\|em++' OneLife/wasm/build-client.sh | head -20 || echo "none found"
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
@@ -80,9 +91,14 @@ jobs:
 
       - name: Build
         run: |
+          # Shadow emcc/em++ so any unqualified call gets the flag automatically
+          emcc() { command emcc -sLEGACY_GL_EMULATION=1 "$@"; }
+          em++() { command em++ -sLEGACY_GL_EMULATION=1 "$@"; }
+          export -f emcc em++
+
           find OneLife minorGems -type f \( -name "*.h" -o -name "*.cpp" \) -exec sed -i 's/\bregister\b//g' {} +
           chmod +x OneLife/wasm/build-client.sh
-          OneLife/wasm/build-client.sh
+          bash OneLife/wasm/build-client.sh
 
       - name: Keep build logs
         if: always()
