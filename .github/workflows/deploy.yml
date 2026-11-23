@@ -49,7 +49,7 @@ jobs:
           (cd minorGems && patch -p1 < "../$P/patches/minorgems.patch")
           cp -r "$P/wasm" OneLife/wasm
 
-      - name: Patch build script (add SDL stub compile)
+      - name: Patch build script
         run: |
           cat > /tmp/sdl_stubs.cpp <<'STUB'
           #ifdef __EMSCRIPTEN__
@@ -70,21 +70,30 @@ jobs:
           python3 - <<'PY'
           p = 'OneLife/wasm/build-client.sh'
           s = open(p).read()
+
+          # 1. Inject stub compile before link line
           marker = 'em++ -O2 -fexceptions "$OBJ"/*.o'
           if marker in s and 'zz_stubs.o' not in s:
               line = 'em++ -O2 -fexceptions -I"$WORK" -w -c /tmp/sdl_stubs.cpp -o "$OBJ/zz_stubs.o"\n'
-              s = s.replace(marker, line + marker)
+              s = s.replace(marker, line + marker, 1)
+
+          # 2. Add link flags next to the existing LEGACY_GL_EMULATION line
+          old_flags = '-sLEGACY_GL_EMULATION=1'
+          new_flags = '-sLEGACY_GL_EMULATION=1 -sERROR_ON_UNDEFINED_SYMBOLS=0 --allow-undefined'
+          if old_flags in s and 'ERROR_ON_UNDEFINED_SYMBOLS' not in s:
+              s = s.replace(old_flags, new_flags, 1)
+
           open(p, 'w').write(s)
-          print("patched build-client.sh" if marker in s else "MARKER NOT FOUND — link line did not match")
+          print("patched" if 'ERROR_ON_UNDEFINED_SYMBOLS' in s else "FAILED — patch not applied")
           PY
 
           echo "=== relevant lines ==="
-          grep -n 'zz_stubs\|LEGACY_GL\|em++ -O2 -fexceptions "\$OBJ"' OneLife/wasm/build-client.sh || true
+          grep -n 'zz_stubs\|LEGACY_GL\|ERROR_ON_UNDEF\|allow-undefined\|em++ -O2 -fexceptions' OneLife/wasm/build-client.sh || true
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.40
+          version: 2.0.34
           actions-cache-folder: emsdk-cache
 
       - name: Build
