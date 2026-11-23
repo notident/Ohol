@@ -1,0 +1,563 @@
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/game/platforms/SDL/gameSDL.cpp b/game/platforms/SDL/gameSDL.cpp
+--- a/game/platforms/SDL/gameSDL.cpp	2026-11-04 21:10:44.000000000 +0000
++++ b/game/platforms/SDL/gameSDL.cpp	2026-11-22 22:53:31.134227913 +0000
+@@ -148,7 +148,10 @@
+     public:
+         
+         AsyncFileThread() {
++#ifndef __EMSCRIPTEN__
++            // the browser build has no threads: files are read at request
+             start();
++#endif
+             }
+ 
+         ~AsyncFileThread() {
+@@ -5043,7 +5046,16 @@
+ 
+ 
+ 
++#ifdef __EMSCRIPTEN__
++extern void embeddedServerStart();
++#endif
++
+ int openSocketConnection( const char *inNumericalAddress, int inPort ) {
++#ifdef __EMSCRIPTEN__
++    // single player: the server lives inside this page.  Start it the first
++    // time somebody wants to connect.
++    embeddedServerStart();
++#endif
+     SocketConnectionRecord r;
+     
+     r.handle = nextSocketConnectionHandle;
+@@ -5279,6 +5291,17 @@
+         NULL,
+         false };
+ 
++#ifdef __EMSCRIPTEN__
++    {
++        File f( NULL, inFilePath );
++        int dataLength;
++        unsigned char *data = f.readFileContents( &dataLength );
++        r.dataLength = dataLength;
++        r.data = data;
++        r.doneReading = true;
++        }
++#endif
++
+     asyncLock.lock();
+     asyncFiles.push_back( r );
+     asyncLock.unlock();
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/graphics/openGL/ScreenGL.h b/graphics/openGL/ScreenGL.h
+--- a/graphics/openGL/ScreenGL.h	2026-11-04 21:10:44.000000000 +0000
++++ b/graphics/openGL/ScreenGL.h	2026-11-22 22:53:31.123605590 +0000
+@@ -280,6 +280,9 @@
+ 		 * Note that this function call never returns.
+ 		 */
+ 		void start();
++
++        // one iteration of the main loop (used by the browser build)
++        void frameStep();
+ 		
+ 
+         // can avoid recording/playback during certain "front matter"
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/graphics/openGL/ScreenGL_SDL.cpp b/graphics/openGL/ScreenGL_SDL.cpp
+--- a/graphics/openGL/ScreenGL_SDL.cpp	2026-11-04 21:10:44.000000000 +0000
++++ b/graphics/openGL/ScreenGL_SDL.cpp	2026-11-22 22:53:31.133010276 +0000
+@@ -1659,22 +1659,26 @@
+ 
+ 
+ 
+-void ScreenGL::start() {
+-	currentScreenGL = this;
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++// runs the embedded single-player server one step (see embeddedServer.cpp)
++extern void embeddedServerFrame();
+ 
+-    // call our resize callback (GLUT used to do this for us when the
+-    // window was created)
+-    callbackResize( mWide, mHigh );
++static void screenGLFrameTrampoline( void *inScreen ) {
++    ( (ScreenGL*)inScreen )->frameStep();
++    }
++#endif
+ 
++// oversleep on last loop (discount it from next sleep)
++// can be negative (add to next sleep)
++static int screenGLOversleepMSec = 0;
+ 
+-    // oversleep on last loop (discount it from next sleep)
+-    // can be negative (add to next sleep)
+-    int oversleepMSec = 0;
+ 
++void ScreenGL::frameStep() {
++#ifdef __EMSCRIPTEN__
++    embeddedServerFrame();
++#endif
+ 
+-    
+-    // main loop
+-    while( true ) {
+         
+         timeSec_t frameStartSec;
+         unsigned long frameStartMSec;
+@@ -2142,12 +2146,13 @@
+             }
+         
+         
++#ifndef __EMSCRIPTEN__
+         if( mUseFrameSleep ) {    
+             // lock down to mMaxFrameRate frames per second
+             int minFrameTime = 1000 / mMaxFrameRate;
+-            if( ( frameTime + oversleepMSec ) < minFrameTime ) {
++            if( ( frameTime + screenGLOversleepMSec ) < minFrameTime ) {
+                 int timeToSleep = 
+-                    minFrameTime - ( frameTime + oversleepMSec );
++                    minFrameTime - ( frameTime + screenGLOversleepMSec );
+                 
+                 //SDL_Delay( timeToSleep );
+                 timeSec_t sleepStartSec;
+@@ -2159,20 +2164,40 @@
+                 int actualSleepTime = 
+                     Time::getMillisecondsSince( sleepStartSec, sleepStartMSec );
+                 
+-                oversleepMSec = actualSleepTime - timeToSleep;
++                screenGLOversleepMSec = actualSleepTime - timeToSleep;
+                 }
+             else { 
+-                oversleepMSec = 0;
++                screenGLOversleepMSec = 0;
+                 }
+             }
+         
+         
++        
++#endif
++    }
++
++
++void ScreenGL::start() {
++	currentScreenGL = this;
++
++    // call our resize callback (GLUT used to do this for us when the
++    // window was created)
++    callbackResize( mWide, mHigh );
++
++#ifdef __EMSCRIPTEN__
++    // the browser owns the loop: one frameStep per animation frame.
++    // simulate_infinite_loop=1 unwinds main() without finishing it
++    emscripten_set_main_loop_arg( screenGLFrameTrampoline, this, 0, 1 );
++#else
++    while( true ) {
++        frameStep();
+         }
+-    
++#endif
+     }
+ 
+ 
+ 
++
+ void ScreenGL::setMaxFrameRate( unsigned int inMaxFrameRate ) {
+     mMaxFrameRate = inMaxFrameRate;
+     }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/HostAddressEmscripten.cpp b/network/emscripten/HostAddressEmscripten.cpp
+--- a/network/emscripten/HostAddressEmscripten.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/HostAddressEmscripten.cpp	2026-11-22 22:51:15.877253112 +0000
+@@ -0,0 +1,16 @@
++#include "minorGems/network/HostAddress.h"
++#include "minorGems/util/stringUtils.h"
++
++// there is no DNS in the in-browser network: every address is this machine
++
++HostAddress *HostAddress::getLocalAddress() {
++    return new HostAddress( stringDuplicate( "127.0.0.1" ), 0 );
++    }
++
++HostAddress *HostAddress::getNumericalAddress() {
++    return new HostAddress( stringDuplicate( "127.0.0.1" ), mPort );
++    }
++
++char HostAddress::isNumerical() {
++    return true;
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/SocketClientEmscripten.cpp b/network/emscripten/SocketClientEmscripten.cpp
+--- a/network/emscripten/SocketClientEmscripten.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/SocketClientEmscripten.cpp	2026-11-22 22:51:15.873587611 +0000
+@@ -0,0 +1,15 @@
++#include "minorGems/network/SocketClient.h"
++#include "loopback.h"
++
++Socket *SocketClient::connectToServer( HostAddress *, long, char *outTimedOut ) {
++    if( outTimedOut != NULL ) {
++        *outTimedOut = false;
++        }
++    int id = loopbackConnect();
++    if( id < 0 ) {
++        return NULL;
++        }
++    Socket *s = new Socket();
++    s->mNativeSocketID = id;
++    return s;
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/SocketEmscripten.cpp b/network/emscripten/SocketEmscripten.cpp
+--- a/network/emscripten/SocketEmscripten.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/SocketEmscripten.cpp	2026-11-22 22:51:15.872424479 +0000
+@@ -0,0 +1,54 @@
++#include "minorGems/network/Socket.h"
++#include "minorGems/network/HostAddress.h"
++#include "minorGems/util/stringUtils.h"
++#include "loopback.h"
++
++char Socket::sInitialized = false;
++
++int Socket::initSocketFramework() {
++    sInitialized = true;
++    return 0;
++    }
++
++Socket::~Socket() {
++    if( !mIsConnectionBroken ) {
++        mIsConnectionBroken = true;
++        }
++    loopbackClose( mNativeSocketID );
++    }
++
++int Socket::isConnected() {
++    return mConnected ? 1 : 0;
++    }
++
++void Socket::setNoDelay( int ) {
++    }
++
++int Socket::send( unsigned char *inBuffer, int inNumBytes, char, char ) {
++    return loopbackSend( mNativeSocketID, inBuffer, inNumBytes );
++    }
++
++int Socket::receive( unsigned char *inBuffer, int inNumBytes, long ) {
++    // never block: the browser has one thread, and the other end of the
++    // connection only makes progress when we return to the main loop
++    return loopbackReceive( mNativeSocketID, inBuffer, inNumBytes );
++    }
++
++void Socket::breakConnection() {
++    if( !mIsConnectionBroken ) {
++        mIsConnectionBroken = true;
++        }
++    loopbackClose( mNativeSocketID );
++    }
++
++HostAddress *Socket::getRemoteHostAddress() {
++    return new HostAddress( stringDuplicate( "127.0.0.1" ), 0 );
++    }
++
++HostAddress *Socket::getLocalHostAddress() {
++    return new HostAddress( stringDuplicate( "127.0.0.1" ), 0 );
++    }
++
++char Socket::isSocketInFDRange() {
++    return true;
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/SocketPollEmscripten.cpp b/network/emscripten/SocketPollEmscripten.cpp
+--- a/network/emscripten/SocketPollEmscripten.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/SocketPollEmscripten.cpp	2026-11-22 22:51:15.876074113 +0000
+@@ -0,0 +1,74 @@
++#include "minorGems/network/SocketPoll.h"
++#include "loopback.h"
++
++SocketPoll::SocketPoll() : mNativeObjectPointer( NULL ), mNextSocketOrServer( 0 ) {
++    }
++
++SocketPoll::~SocketPoll() {
++    for( int i=0; i<mWatchedList.size(); i++ ) {
++        delete *( mWatchedList.getElement( i ) );
++        }
++    }
++
++char SocketPoll::addSocket( Socket *inSock, void *inOtherData ) {
++    SocketOrServer *s = new SocketOrServer;
++    s->isSocket = true;
++    s->sock = inSock;
++    s->server = NULL;
++    s->otherData = inOtherData;
++    mWatchedList.push_back( s );
++    return true;
++    }
++
++char SocketPoll::addSocketServer( SocketServer *inServer, void *inOtherData ) {
++    SocketOrServer *s = new SocketOrServer;
++    s->isSocket = false;
++    s->sock = NULL;
++    s->server = inServer;
++    s->otherData = inOtherData;
++    mWatchedList.push_back( s );
++    return true;
++    }
++
++void SocketPoll::removeSocket( Socket *inSock ) {
++    for( int i=0; i<mWatchedList.size(); i++ ) {
++        SocketOrServer *s = *( mWatchedList.getElement( i ) );
++        if( s->isSocket && s->sock == inSock ) {
++            delete s;
++            mWatchedList.deleteElement( i );
++            return;
++            }
++        }
++    }
++
++void SocketPoll::removeSocketServer( SocketServer *inServer ) {
++    for( int i=0; i<mWatchedList.size(); i++ ) {
++        SocketOrServer *s = *( mWatchedList.getElement( i ) );
++        if( ! s->isSocket && s->server == inServer ) {
++            delete s;
++            mWatchedList.deleteElement( i );
++            return;
++            }
++        }
++    }
++
++// never sleeps.  Returns something that is ready right now, or NULL.
++SocketOrServer *SocketPoll::wait( int ) {
++    int n = mWatchedList.size();
++    for( int k=0; k<n; k++ ) {
++        int i = ( mNextSocketOrServer + k ) % n;
++        SocketOrServer *s = *( mWatchedList.getElement( i ) );
++        char ready = false;
++        if( s->isSocket ) {
++            ready = loopbackBytesAvailable( s->sock->mNativeSocketID ) > 0;
++            }
++        else {
++            ready = loopbackHasPendingAccept();
++            }
++        if( ready ) {
++            mNextSocketOrServer = i + 1;
++            return s;
++            }
++        }
++    return NULL;
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/SocketServerEmscripten.cpp b/network/emscripten/SocketServerEmscripten.cpp
+--- a/network/emscripten/SocketServerEmscripten.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/SocketServerEmscripten.cpp	2026-11-22 22:51:15.874829225 +0000
+@@ -0,0 +1,28 @@
++#include "minorGems/network/SocketServer.h"
++#include "minorGems/network/Socket.h"
++#include "loopback.h"
++
++SocketServer::SocketServer( int, int ) {
++    mNativeSocketID = -1;
++    loopbackSetServerListening( true );
++    }
++
++SocketServer::~SocketServer() {
++    loopbackSetServerListening( false );
++    }
++
++Socket *SocketServer::acceptConnection( long, char *outTimedOut ) {
++    int id = loopbackAccept();
++    if( id < 0 ) {
++        if( outTimedOut != NULL ) {
++            *outTimedOut = true;
++            }
++        return NULL;
++        }
++    if( outTimedOut != NULL ) {
++        *outTimedOut = false;
++        }
++    Socket *s = new Socket();
++    s->mNativeSocketID = id;
++    return s;
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/loopback.cpp b/network/emscripten/loopback.cpp
+--- a/network/emscripten/loopback.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/loopback.cpp	2026-11-22 22:51:15.871211287 +0000
+@@ -0,0 +1,140 @@
++#include "loopback.h"
++
++#include <string.h>
++
++typedef struct Pipe {
++        SimpleVector<unsigned char> toEnd[2];   // data waiting for each end
++        char closed[2];
++        char used;
++    } Pipe;
++
++static SimpleVector<Pipe*> pipes;
++static SimpleVector<int> pendingAccepts;
++static char serverListening = false;
++
++
++void loopbackSetServerListening( char inListening ) {
++    serverListening = inListening;
++    }
++
++char loopbackIsServerListening() {
++    return serverListening;
++    }
++
++
++static Pipe *getPipe( int inID ) {
++    int p = inID / 2;
++    if( inID < 0 || p >= pipes.size() ) {
++        return NULL;
++        }
++    Pipe *pipe = pipes.getElementDirect( p );
++    if( ! pipe->used ) {
++        return NULL;
++        }
++    return pipe;
++    }
++
++
++int loopbackConnect() {
++    if( ! serverListening ) {
++        return -1;
++        }
++    Pipe *pipe = new Pipe;
++    pipe->closed[0] = false;
++    pipe->closed[1] = false;
++    pipe->used = true;
++
++    int index = -1;
++    for( int i=0; i<pipes.size(); i++ ) {
++        if( ! pipes.getElementDirect( i )->used ) {
++            delete pipes.getElementDirect( i );
++            *( pipes.getElement( i ) ) = pipe;
++            index = i;
++            break;
++            }
++        }
++    if( index == -1 ) {
++        pipes.push_back( pipe );
++        index = pipes.size() - 1;
++        }
++    pendingAccepts.push_back( index * 2 + 1 );
++    return index * 2;
++    }
++
++
++char loopbackHasPendingAccept() {
++    return pendingAccepts.size() > 0;
++    }
++
++int loopbackAccept() {
++    if( pendingAccepts.size() == 0 ) {
++        return -1;
++        }
++    int id = pendingAccepts.getElementDirect( 0 );
++    pendingAccepts.deleteElement( 0 );
++    return id;
++    }
++
++
++int loopbackSend( int inID, const unsigned char *inData, int inLength ) {
++    Pipe *pipe = getPipe( inID );
++    if( pipe == NULL ) {
++        return -1;
++        }
++    int me = inID & 1;
++    int other = 1 - me;
++    if( pipe->closed[me] || pipe->closed[other] ) {
++        return -1;
++        }
++    pipe->toEnd[other].appendArray( (unsigned char*)inData, inLength );
++    return inLength;
++    }
++
++
++int loopbackBytesAvailable( int inID ) {
++    Pipe *pipe = getPipe( inID );
++    if( pipe == NULL ) {
++        return 0;
++        }
++    return pipe->toEnd[ inID & 1 ].size();
++    }
++
++
++int loopbackReceive( int inID, unsigned char *inBuffer, int inMax ) {
++    Pipe *pipe = getPipe( inID );
++    if( pipe == NULL ) {
++        return -1;
++        }
++    int me = inID & 1;
++    int other = 1 - me;
++    SimpleVector<unsigned char> *q = &( pipe->toEnd[me] );
++    int n = q->size();
++    if( n == 0 ) {
++        if( pipe->closed[other] || pipe->closed[me] ) {
++            return -1;
++            }
++        return -2;
++        }
++    if( n > inMax ) {
++        n = inMax;
++        }
++    unsigned char *data = q->getElementArray();
++    memcpy( inBuffer, data, n );
++    delete [] data;
++    q->deleteStartElements( n );
++    return n;
++    }
++
++
++void loopbackClose( int inID ) {
++    Pipe *pipe = getPipe( inID );
++    if( pipe == NULL ) {
++        return;
++        }
++    pipe->closed[ inID & 1 ] = true;
++    if( pipe->closed[0] && pipe->closed[1] ) {
++        pipe->used = false;
++        pipe->toEnd[0].deleteAll();
++        pipe->toEnd[1].deleteAll();
++        }
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/emscripten/loopback.h b/network/emscripten/loopback.h
+--- a/network/emscripten/loopback.h	1970-01-01 00:00:00.000000000 +0000
++++ b/network/emscripten/loopback.h	2026-11-22 22:51:15.869945860 +0000
+@@ -0,0 +1,31 @@
++#ifndef LOOPBACK_INCLUDED
++#define LOOPBACK_INCLUDED
++
++// In-memory "network" for the browser build.  The client and the server
++// run in the same WebAssembly module, so a connection is just two byte
++// queues.  Socket ids are  pipeIndex*2 + end  (end 0 = client, 1 = server).
++
++#include "minorGems/util/SimpleVector.h"
++
++void loopbackSetServerListening( char inListening );
++char loopbackIsServerListening();
++
++// returns the client end id, or -1 if no server is listening.
++// the server end is queued for accept
++int loopbackConnect();
++
++// returns server end id of the next pending connection, or -1
++int loopbackAccept();
++char loopbackHasPendingAccept();
++
++// -1 if broken, otherwise number of bytes queued
++int loopbackSend( int inID, const unsigned char *inData, int inLength );
++
++// -1 if the other side closed and nothing is left to read,
++// -2 if nothing to read right now, otherwise bytes read (at most inMax)
++int loopbackReceive( int inID, unsigned char *inBuffer, int inMax );
++
++int loopbackBytesAvailable( int inID );
++void loopbackClose( int inID );
++
++#endif
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' a/network/web/WebRequest.cpp b/network/web/WebRequest.cpp
+--- a/network/web/WebRequest.cpp	2026-11-04 21:10:44.000000000 +0000
++++ b/network/web/WebRequest.cpp	2026-11-22 22:53:31.134710300 +0000
+@@ -197,6 +197,10 @@
+ 
+ 
+ int WebRequest::step() {
++#ifdef __EMSCRIPTEN__
++    // no internet access from the in-browser network
++    mError = true;
++#endif
+     if( mError ) {
+         return -1;
+         }

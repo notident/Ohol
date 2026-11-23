@@ -1,0 +1,812 @@
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' -x clientTagLog.txt -x curseLog -x evePlacementHomelandLog.txt -x evePlacementLog.txt -x ipLog.txt -x lastEveLocation.txt -x lifeLog -x recentPlacements.txt -x sayLog.txt a/gameSource/embeddedServer.cpp b/gameSource/embeddedServer.cpp
+--- a/gameSource/embeddedServer.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/gameSource/embeddedServer.cpp	2026-11-22 22:54:17.190983017 +0000
+@@ -0,0 +1,35 @@
++// Browser build only: runs the OneLife server inside the client's page.
++//
++// The server's main loop was split into serverSetup() / serverStep() /
++// serverCleanup() (see server/server.cpp).  We call serverSetup() the first
++// time the client tries to connect, then one serverStep() per browser frame.
++// Client and server talk through the in-memory sockets in
++// minorGems/network/emscripten.
++
++extern int serverSetup( int inNumArgs, const char **inArgs );
++extern void serverStep();
++
++static char started = false;
++static char failed = false;
++
++
++void embeddedServerStart() {
++    if( started ) {
++        return;
++        }
++    started = true;
++
++    const char *args[1] = { "OneLifeServer" };
++    int result = serverSetup( 1, args );
++
++    if( result != -1 ) {
++        failed = true;
++        }
++    }
++
++
++void embeddedServerFrame() {
++    if( started && ! failed ) {
++        serverStep();
++        }
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' -x clientTagLog.txt -x curseLog -x evePlacementHomelandLog.txt -x evePlacementLog.txt -x ipLog.txt -x lastEveLocation.txt -x lifeLog -x recentPlacements.txt -x sayLog.txt a/server/makeFileList b/server/makeFileList
+--- a/server/makeFileList	2026-09-15 13:58:39.000000000 +0000
++++ b/server/makeFileList	2026-11-22 17:31:58.080499390 +0000
+@@ -24,6 +24,7 @@
+ 
+ LAYER_SOURCE = \
+ server.cpp \
++npc.cpp \
+ map.cpp \
+ ../gameSource/transitionBank.cpp \
+ ../gameSource/categoryBank.cpp \
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' -x clientTagLog.txt -x curseLog -x evePlacementHomelandLog.txt -x evePlacementLog.txt -x ipLog.txt -x lastEveLocation.txt -x lifeLog -x recentPlacements.txt -x sayLog.txt a/server/npc.cpp b/server/npc.cpp
+--- a/server/npc.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/server/npc.cpp	2026-11-22 20:17:31.064473168 +0000
+@@ -0,0 +1,61 @@
++#include "npc.h"
++
++#include <string.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <sys/types.h>
++#include <sys/socket.h>
++
++
++NpcLink::NpcLink()
++        : mFD( -1 ), mServerFD( -1 ), mOK( false ), mServerSideTaken( false ) {
++    int fds[2];
++    if( socketpair( AF_UNIX, SOCK_STREAM, 0, fds ) == 0 ) {
++        mServerFD = fds[0];
++        mFD = fds[1];
++        fcntl( mFD, F_SETFL, O_NONBLOCK );
++        mOK = true;
++        }
++    }
++
++
++NpcLink::~NpcLink() {
++    if( mFD != -1 ) {
++        close( mFD );
++        }
++    if( ! mServerSideTaken && mServerFD != -1 ) {
++        close( mServerFD );
++        }
++    }
++
++
++Socket *NpcLink::takeServerSocket() {
++    Socket *s = new Socket();
++    s->mNativeSocketID = mServerFD;
++    mServerSideTaken = true;
++    return s;
++    }
++
++
++void NpcLink::queueCommand( const char *inCommand ) {
++    if( mFD == -1 ) {
++        return;
++        }
++    int len = strlen( inCommand );
++    char *msg = new char[ len + 1 ];
++    memcpy( msg, inCommand, len );
++    msg[len] = '#';
++    // commands are tiny, so one send either goes out whole or not at all
++    send( mFD, msg, len + 1, MSG_NOSIGNAL );
++    delete [] msg;
++    }
++
++
++void NpcLink::drain() {
++    if( mFD == -1 ) {
++        return;
++        }
++    char junk[4096];
++    while( recv( mFD, junk, sizeof( junk ), 0 ) > 0 ) {
++        }
++    }
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' -x clientTagLog.txt -x curseLog -x evePlacementHomelandLog.txt -x evePlacementLog.txt -x ipLog.txt -x lastEveLocation.txt -x lifeLog -x recentPlacements.txt -x sayLog.txt a/server/npc.h b/server/npc.h
+--- a/server/npc.h	1970-01-01 00:00:00.000000000 +0000
++++ b/server/npc.h	2026-11-22 20:17:31.060666374 +0000
+@@ -0,0 +1,38 @@
++#ifndef NPC_LINK_INCLUDED
++#define NPC_LINK_INCLUDED
++
++#include "minorGems/network/Socket.h"
++
++
++// A connection between the server and a server-side AI player.
++//
++// Internally an OS socket pair.  One end is wrapped in a normal minorGems
++// Socket that the server uses like any client connection.  We keep the
++// other end and type client commands into it, so the NPC goes through
++// the normal message handling (path checks, transitions, hunger...).
++class NpcLink {
++    public:
++        NpcLink();
++        ~NpcLink();
++
++        // true if the socket pair was created
++        char isOK() { return mOK; }
++
++        // the server-side Socket.  Ownership goes to the server
++        // (it deletes it when the player is removed).
++        Socket *takeServerSocket();
++
++        // inCommand without the trailing '#', for example "SELF 0 0 0"
++        void queueCommand( const char *inCommand );
++
++        // throw away anything the server sent us, so buffers never fill up
++        void drain();
++
++    protected:
++        int mFD;            // our end
++        int mServerFD;
++        char mOK;
++        char mServerSideTaken;
++    };
++
++#endif
+diff -ruN -x '*.o' -x '*.dep' -x '*.dep2' -x Makefile -x Makefile.minorGems_dependencies -x '*.temp' -x OneLifeServer -x '*.db' -x '*.orig' -x '*.before_split' -x log.txt -x longStepLog.txt -x biomeRandSeed.txt -x familyDataLog.txt -x mapChangeLogs -x wasm -x .github -x categories -x ground -x music -x objects -x overlays -x sounds -x sprites -x transitions -x animations -x contentSettings -x dataVersionNumber.txt -x settings -x '*.compile' -x clientTagLog.txt -x curseLog -x evePlacementHomelandLog.txt -x evePlacementLog.txt -x ipLog.txt -x lastEveLocation.txt -x lifeLog -x recentPlacements.txt -x sayLog.txt a/server/server.cpp b/server/server.cpp
+--- a/server/server.cpp	2026-09-15 13:58:39.000000000 +0000
++++ b/server/server.cpp	2026-11-22 22:52:09.601089461 +0000
+@@ -66,6 +66,7 @@
+ #include "ipBanList.h"
+ #include "periodicPlacements.h"
+ #include "timeLogger.h"
++#include "npc.h"
+ 
+ 
+ #include "minorGems/util/random/JenkinsRandomSource.h"
+@@ -5532,6 +5533,7 @@
+ 
+ 
+ 
++
+ static void setPlayerDisconnected( LiveObject *inPlayer, 
+                                    const char *inReason ) {    
+     /*
+@@ -12232,6 +12234,455 @@
+ 
+ 
+ 
++
++
++// ---------------------------------------------------------------------
++// Single-player NPC family
++//
++// NPCs are normal LiveObjects connected through an NpcLink (socket pair).
++// Each think step they queue the same text commands a real client would
++// send (MOVE, USE, SELF, UBABY, SAY), so all game rules apply to them.
++// ---------------------------------------------------------------------
++
++
++
++typedef struct NpcBrain {
++        int id;
++        int role;           // 0 = mother, 1 = father
++        int momID;          // who the family's mother is
++        double nextThink;
++        double nextSay;
++        int homeX, homeY;
++        NpcLink *link;
++    } NpcBrain;
++
++static SimpleVector<NpcBrain> npcBrains;
++static int npcSpawnCounter = 0;
++
++
++static NpcBrain *getNpcBrain( int inID ) {
++    for( int i=0; i<npcBrains.size(); i++ ) {
++        NpcBrain *b = npcBrains.getElement( i );
++        if( b->id == inID ) {
++            return b;
++            }
++        }
++    return NULL;
++    }
++
++
++// picks a random person object of the wanted gender, or -1
++static int npcPickDisplayID( char inWantFemale ) {
++    for( int t=0; t<200; t++ ) {
++        int id = getRandomPersonObject();
++        ObjectRecord *o = getObject( id );
++        if( o != NULL && o->person && ( o->male != inWantFemale ) ) {
++            return id;
++            }
++        }
++    return -1;
++    }
++
++
++// returns new player ID or -1
++// inRole: 0 mother, 1 father
++static int spawnNpc( int inRole, int inMomID, GridPos *inPos ) {
++    npcSpawnCounter++;
++
++    char *email = autoSprintf( "npc_%d_%d@npc.local", 
++                               inRole, npcSpawnCounter );
++    NpcLink *link = new NpcLink();
++    if( ! link->isOK() ) {
++        delete link;
++        delete [] email;
++        return -1;
++        }
++    Socket *sock = link->takeServerSocket();
++    SimpleVector<char> *buffer = new SimpleVector<char>();
++
++    CurseStatus cs = { 0, 0 };
++    PastLifeStats ls;
++    ls.lifeCount = 10;
++    ls.lifeTotalSeconds = 100000;
++    ls.accountExistedDays = 100;
++
++    int displayID = npcPickDisplayID( inRole == 0 );
++
++    // email is owned by the new player; sock and buffer too
++    int id = processLoggedInPlayer( false, sock, buffer, email, 
++                                    (char*)"npc", 0, cs, ls, 1.0f,
++                                    NULL, -2, displayID, inPos, true );
++    
++    if( id < 0 ) {
++        delete link;
++        return -1;
++        }
++
++    NpcBrain b;
++    b.link = link;
++    b.id = id;
++    b.role = inRole;
++    b.momID = ( inRole == 0 ) ? id : inMomID;
++    b.nextThink = Time::getCurrentTime() + 2;
++    b.nextSay = Time::getCurrentTime() + 20;
++    LiveObject *p = getLiveObject( id );
++    b.homeX = p->xd;
++    b.homeY = p->yd;
++    npcBrains.push_back( b );
++    return id;
++    }
++
++
++static LiveObject *findLiveNpcWithRole( int inRole ) {
++    for( int i=0; i<players.size(); i++ ) {
++        LiveObject *o = players.getElement( i );
++        if( ! o->error && ! o->dying ) {
++            NpcBrain *b = getNpcBrain( o->id );
++            if( b != NULL && b->role == inRole ) {
++                return o;
++                }
++            }
++        }
++    return NULL;
++    }
++
++
++// Makes sure a living NPC mother (and father) exist.
++// Returns the mother's ID, or -1 if NPC family is disabled.
++// A human player who is born with this as inForceParentID becomes
++// the NPC mother's baby.
++static int npcEnsureFamily() {
++    if( ! SettingsManager::getIntSetting( "npcFamily", 1 ) ) {
++        return -1;
++        }
++
++    LiveObject *mom = findLiveNpcWithRole( 0 );
++
++    if( mom == NULL ) {
++        int momID = spawnNpc( 0, -1, NULL );
++        if( momID == -1 ) {
++            return -1;
++            }
++        mom = getLiveObject( momID );
++        }
++
++    LiveObject *dad = findLiveNpcWithRole( 1 );
++
++    if( dad == NULL ) {
++        GridPos p = { mom->xd + 3, mom->yd };
++        spawnNpc( 1, mom->id, &p );
++        }
++    return mom->id;
++    }
++
++
++// the server only allows actions on the same tile or on a tile directly
++// up, down, left or right (no diagonals), so use Manhattan distance
++static int npcCheb( int inDX, int inDY ) {
++    int a = inDX < 0 ? -inDX : inDX;
++    int b = inDY < 0 ? -inDY : inDY;
++    return a + b;
++    }
++
++
++// for real (human) logins: returns the NPC mother to be born to, or -1
++static int npcParentForLogin( int inTutorialNumber, char inReconnectOnly ) {
++    if( inTutorialNumber > 0 || inReconnectOnly ) {
++        return -1;
++        }
++    return npcEnsureFamily();
++    }
++
++
++static char npcBlocked( int inX, int inY ) {
++    return isMapSpotBlocking( inX, inY );
++    }
++
++
++// breadth-first search, 4-connected, within +/-10 of start.
++// goal = any cell within inGoalDist (Chebyshev) of target
++// that is walkable.  Fills outDeltas with cumulative offsets from the
++// start.  Returns number of steps (0 if none / already there).
++#define NPC_R 10
++static int npcFindPath( int inSX, int inSY, int inTX, int inTY, 
++                        int inGoalDist, int inMaxSteps,
++                        int *outDX, int *outDY ) {
++    const int W = 2 * NPC_R + 1;
++    static int prev[ W * W ];
++    static int queue[ W * W ];
++    
++    for( int i=0; i<W*W; i++ ) {
++        prev[i] = -2;
++        }
++    
++    int head = 0, tail = 0;
++    int startIdx = NPC_R * W + NPC_R;
++    prev[ startIdx ] = -1;
++    queue[ tail++ ] = startIdx;
++    
++    int goalIdx = -1;
++    int dx4[4] = { 1, -1, 0, 0 };
++    int dy4[4] = { 0, 0, 1, -1 };
++    
++    while( head < tail ) {
++        int cur = queue[ head++ ];
++        int cx = inSX + ( cur % W ) - NPC_R;
++        int cy = inSY + ( cur / W ) - NPC_R;
++        
++        int cd = npcCheb( cx - inTX, cy - inTY );
++        if( cd <= inGoalDist && ! ( cx == inTX && cy == inTY && 
++                                    inGoalDist > 0 ) ) {
++            goalIdx = cur;
++            break;
++            }
++        for( int d=0; d<4; d++ ) {
++            int nx = cx + dx4[d];
++            int ny = cy + dy4[d];
++            int ix = nx - inSX + NPC_R;
++            int iy = ny - inSY + NPC_R;
++            if( ix < 0 || iy < 0 || ix >= W || iy >= W ) {
++                continue;
++                }
++            int ni = iy * W + ix;
++            if( prev[ni] != -2 || npcBlocked( nx, ny ) ) {
++                continue;
++                }
++            prev[ni] = cur;
++            queue[ tail++ ] = ni;
++            }
++        }
++    
++    if( goalIdx == -1 || goalIdx == startIdx ) {
++        return 0;
++        }
++    
++    // walk back from goal to start, then reverse into forward order
++    int bx[ W * W ], by[ W * W ];
++    int k = 0;
++    for( int c = goalIdx; c != startIdx; c = prev[c] ) {
++        bx[k] = ( c % W ) - NPC_R;
++        by[k] = ( c / W ) - NPC_R;
++        k++;
++        }
++    int n = k;
++    if( n > inMaxSteps ) {
++        n = inMaxSteps;
++        }
++    for( int i=0; i<n; i++ ) {
++        outDX[i] = bx[ k - 1 - i ];
++        outDY[i] = by[ k - 1 - i ];
++        }
++    return n;
++    }
++
++
++static void npcWalkToward( LiveObject *p, NpcLink *inSock,
++                           int inTX, int inTY, int inGoalDist ) {
++    int dx[ 12 ], dy[ 12 ];
++    int steps = npcFindPath( p->xd, p->yd, inTX, inTY, inGoalDist, 8, dx, dy );
++    if( steps == 0 ) {
++        return;
++        }
++    int seq = p->lastMoveSequenceNumber + 1;
++    if( seq < 2 ) {
++        seq = 2;
++        }
++    SimpleVector<char> cmd;
++    char *head = autoSprintf( "MOVE %d %d @%d", 
++                              p->xd - p->birthPos.x, p->yd - p->birthPos.y, 
++                              seq );
++    cmd.appendElementString( head );
++    delete [] head;
++    for( int i=0; i<steps; i++ ) {
++        char *s = autoSprintf( " %d %d", dx[i], dy[i] );
++        cmd.appendElementString( s );
++        delete [] s;
++        }
++    char *c = cmd.getElementString();
++    inSock->queueCommand( c );
++    delete [] c;
++    }
++
++
++static char npcIsFoodSource( int inID, char *outPickup ) {
++    if( inID <= 0 ) {
++        return false;
++        }
++    ObjectRecord *o = getObject( inID );
++    if( o == NULL ) {
++        return false;
++        }
++    // bare hand picks it up, and what we get is edible
++    TransRecord *t = getTrans( 0, inID );
++    if( t != NULL && t->newActor > 0 ) {
++        ObjectRecord *n = getObject( t->newActor );
++        if( n != NULL && n->foodValue > 0 ) {
++            *outPickup = true;
++            return true;
++            }
++        }
++    if( t == NULL && o->foodValue > 0 && ! o->permanent ) {
++        *outPickup = true;
++        return true;
++        }
++    return false;
++    }
++
++
++static void npcThink( LiveObject *p, NpcBrain *b ) {
++    NpcLink *sock = b->link;
++    if( sock == NULL || p->heldByOther || p->dying ) {
++        return;
++        }
++    double now = Time::getCurrentTime();
++
++    // still walking?
++    if( ( p->xd != p->xs || p->yd != p->ys ) &&
++        now < p->moveStartTime + p->moveTotalSeconds + 0.2 ) {
++        return;
++        }
++
++    int rx = p->xd - p->birthPos.x;
++    int ry = p->yd - p->birthPos.y;
++
++    int cap = computeFoodCapacity( p );
++    char hungry = p->foodStore < cap - 4;
++
++    // is there a hungry little one in our family to feed?
++    LiveObject *kid = NULL;
++    for( int i=0; i<players.size(); i++ ) {
++        LiveObject *o = players.getElement( i );
++        if( o->error || o->dying || o->parentID != b->momID ) {
++            continue;
++            }
++        if( computeAge( o ) < 3 && o->foodStore < computeFoodCapacity( o ) - 2 ) {
++            kid = o;
++            break;
++            }
++        }
++
++    char holdingFood = false;
++    if( p->holdingID > 0 ) {
++        ObjectRecord *h = getObject( p->holdingID );
++        holdingFood = ( h != NULL && h->foodValue > 0 );
++        }
++
++    // 1. feed the kid, kid comes first
++    if( kid != NULL && holdingFood ) {
++        int kx = kid->xd, ky = kid->yd;
++        if( npcCheb( kx - p->xd, ky - p->yd ) <= 1 ) {
++            char *c = autoSprintf( "UBABY %d %d -1", 
++                                   kx - p->birthPos.x, ky - p->birthPos.y );
++            sock->queueCommand( c );
++            delete [] c;
++            }
++        else {
++            npcWalkToward( p, sock, kx, ky, 1 );
++            }
++        b->nextThink = now + 1.0;
++        return;
++        }
++
++    // 2. eat if hungry
++    if( hungry && holdingFood ) {
++        char *c = autoSprintf( "SELF %d %d 0", rx, ry );
++        sock->queueCommand( c );
++        delete [] c;
++        b->nextThink = now + 1.0;
++        return;
++        }
++
++    // 3. get food if someone needs it
++    if( ( hungry || kid != NULL ) && p->holdingID == 0 ) {
++        int bestD = 9999, bx = 0, by = 0;
++        for( int y = p->yd - 7; y <= p->yd + 7; y++ ) {
++            for( int x = p->xd - 7; x <= p->xd + 7; x++ ) {
++                char pickup;
++                if( npcIsFoodSource( getMapObject( x, y ), &pickup ) ) {
++                    int d = abs( x - p->xd ) + abs( y - p->yd );
++                    if( d < bestD ) {
++                        bestD = d; bx = x; by = y;
++                        }
++                    }
++                }
++            }
++        if( bestD < 9999 ) {
++            if( npcCheb( bx - p->xd, by - p->yd ) <= 1 ) {
++                char *c = autoSprintf( "USE %d %d", 
++                                       bx - p->birthPos.x, 
++                                       by - p->birthPos.y );
++                sock->queueCommand( c );
++                delete [] c;
++                }
++            else {
++                npcWalkToward( p, sock, bx, by, 1 );
++                }
++            b->nextThink = now + 1.0;
++            return;
++            }
++        }
++
++    // 4. holding something useless?  put it down if the ground is free.
++    if( p->holdingID > 0 && ! holdingFood && 
++        getMapObject( p->xd, p->yd ) == 0 ) {
++        char *c = autoSprintf( "DROP %d %d -1", rx, ry );
++        sock->queueCommand( c );
++        delete [] c;
++        b->nextThink = now + 1.5;
++        return;
++        }
++
++    // 5. chatter now and then
++    if( now > b->nextSay ) {
++        const char *lines[5] = { "HELLO", "NICE DAY", "STAY CLOSE", 
++                                 "WE ARE FAMILY", "LOVE YOU" };
++        char *c = autoSprintf( "SAY 0 0 %s", 
++                               lines[ randSource.getRandomBoundedInt( 0, 4 ) ] );
++        sock->queueCommand( c );
++        delete [] c;
++        b->nextSay = now + 30 + randSource.getRandomBoundedInt( 0, 40 );
++        }
++
++    // 6. otherwise stroll near home, or follow the mother if father
++    if( randSource.getRandomBoundedInt( 0, 2 ) == 0 ) {
++        int hx = b->homeX, hy = b->homeY;
++        if( b->role == 1 ) {
++            LiveObject *mom = getLiveObject( b->momID );
++            if( mom != NULL ) {
++                hx = mom->xd; hy = mom->yd;
++                }
++            }
++        int tx = hx + randSource.getRandomBoundedInt( -6, 6 );
++        int ty = hy + randSource.getRandomBoundedInt( -6, 6 );
++        npcWalkToward( p, sock, tx, ty, 0 );
++        }
++    b->nextThink = now + 2 + randSource.getRandomBoundedInt( 0, 2 );
++    }
++
++
++static void npcTick() {
++    double now = Time::getCurrentTime();
++
++    for( int i=npcBrains.size()-1; i>=0; i-- ) {
++        NpcBrain *b = npcBrains.getElement( i );
++        LiveObject *p = getLiveObject( b->id );
++        if( p == NULL || p->error || p->dying ) {
++            delete b->link;
++            npcBrains.deleteElement( i );
++            continue;
++            }
++        b->link->drain();
++        if( now >= b->nextThink ) {
++            npcThink( p, b );
++            if( b->nextThink < now ) {
++                b->nextThink = now + 1;
++                }
++            }
++        }
++    }
++
++
++
+ static void processWaitingTwinConnection( FreshConnection inConnection ) {
+     AppLog::infoF( "Player %s waiting for twin party of %d", 
+                    inConnection.email,
+@@ -19752,9 +20203,22 @@
+ 
+ 
+ 
+-int main( int inNumArgs, const char **inArgs ) {
++// ---- server main split into setup / step / cleanup ----
++static int isAHAP;
++static FILE *f;
++static int port;
++static SocketServer *server;
++static char someClientMessageReceived;
++static int shutdownMode;
++static int forceShutdownMode;
++static double  longestStepTime;
++
++// returns -1 if the server should keep running, otherwise an exit code
++int serverSetup( int inNumArgs, const char **inArgs ) {
+     // use the serverSettings folder if it's available
++#ifndef ONELIFE_EMBEDDED_SERVER
+     setUseServerSettings();
++#endif
+     
+     useMainSettings();
+     
+@@ -19832,7 +20296,7 @@
+     int dataVer = readIntFromFile( "dataVersionNumber.txt", 1 );
+     int codeVer = readIntFromFile( "serverCodeVersionNumber.txt", 1 );
+     
+-    int isAHAP = readIntFromFile( "isAHAP.txt", 0 );
++    isAHAP = readIntFromFile( "isAHAP.txt", 0 );
+     
+     if( isAHAP ) {
+         versionNumber = codeVer;
+@@ -20026,7 +20490,7 @@
+     useMainSettings();
+ 
+ 
+-    FILE *f = fopen( "curseWordList.txt", "r" );
++    f = fopen( "curseWordList.txt", "r" );
+     
+     if( f != NULL ) {
+     
+@@ -20144,6 +20608,7 @@
+     // during some if its initialization.  This is effectively an empty
+     // animation bank, but this allows the calls in objectBank to still work.
+ 
++#ifndef ONELIFE_EMBEDDED_SERVER
+     initAnimationBankStart( &rebuilding );
+     while( initAnimationBankStep() < 1.0 );
+     initAnimationBankFinish();
+@@ -20163,6 +20628,8 @@
+     initTransBankStart( &rebuilding, true, true, true, true );
+     while( initTransBankStep() < 1.0 );
+     initTransBankFinish();
++#endif
++
+     
+ 
+     // defaults to one hour
+@@ -20250,12 +20717,12 @@
+ 
+ 
+     
+-    int port = 
++    port = 
+         SettingsManager::getIntSetting( "port", 5077 );
+     
+     
+     
+-    SocketServer *server = new SocketServer( port, 256 );
++    server = new SocketServer( port, 256 );
+     
+     sockPoll.addSocketServer( server );
+     
+@@ -20264,11 +20731,11 @@
+     // if we received one the last time we looped, don't sleep when
+     // polling for socket being ready, because there could be more data
+     // waiting in the buffer for a given socket
+-    char someClientMessageReceived = false;
++    someClientMessageReceived = false;
+     
+     
+-    int shutdownMode = SettingsManager::getIntSetting( "shutdownMode", 0 );
+-    int forceShutdownMode = 
++    shutdownMode = SettingsManager::getIntSetting( "shutdownMode", 0 );
++    forceShutdownMode = 
+             SettingsManager::getIntSetting( "forceShutdownMode", 0 );
+         
+     
+@@ -20292,9 +20759,12 @@
+         }
+     */
+ 
+-    double  longestStepTime = 0;
++    longestStepTime = 0;
+     
+-    while( !quit ) {
++    return -1;
++    }
++
++void serverStep() {
+ 
+         double curStepTime = Time::getCurrentTime();
+         
+@@ -21375,7 +21845,9 @@
+                             nextConnection->curseStatus,
+                             nextConnection->lifeStats,
+                             nextConnection->fitnessScore,
+-                            nextConnection->twinCode );
++                            nextConnection->twinCode,
++                            npcParentForLogin( nextConnection->tutorialNumber,
++                                               nextConnection->reconnectOnly ) );
+ 
+                         if( nextConnection->twinCode != NULL ) {
+                             delete [] nextConnection->twinCode;
+@@ -21692,7 +22164,10 @@
+                                             nextConnection->curseStatus,
+                                             nextConnection->lifeStats,
+                                             nextConnection->fitnessScore,
+-                                            nextConnection->twinCode );
++                                            nextConnection->twinCode,
++                                            npcParentForLogin( 
++                                                nextConnection->tutorialNumber,
++                                                nextConnection->reconnectOnly ) );
+                                         
+                                         if( nextConnection->twinCode != NULL ) {
+                                             delete [] nextConnection->twinCode;
+@@ -21930,6 +22405,8 @@
+     
+         someClientMessageReceived = false;
+ 
++        npcTick();
++
+         numLive = players.size();
+         
+ 
+@@ -34055,7 +34532,9 @@
+             }
+ 
+         clearTimeLog();
+-        }   // end of   while( !quit ) {
++    }
++
++void serverCleanup() {
+     
+     // stop listening on server socket immediately, before running
+     // cleanup steps.  Cleanup may take a while, and we don't want to leave
+@@ -34070,12 +34549,23 @@
+     
+     
+     AppLog::info( "Done." );
++    }
+ 
++#ifndef ONELIFE_EMBEDDED_SERVER
++int main( int inNumArgs, const char **inArgs ) {
++    int r = serverSetup( inNumArgs, inArgs );
++    if( r != -1 ) {
++        return r;
++        }
++    while( !quit ) {
++        serverStep();
++        }
++    serverCleanup();
+     return 0;
+     }
++#endif
+ 
+-
+-
++#ifndef ONELIFE_EMBEDDED_SERVER
+ // implement null versions of these to allow a headless build
+ // we never call drawObject, but we need to use other objectBank functions
+ 
+@@ -34210,3 +34700,5 @@
+     return false;
+     }
+ 
++
++#endif
+\ No newline at end of file
